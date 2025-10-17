@@ -1,0 +1,28 @@
+# Environment variables
+.env
+
+# Google credentials
+credentials.json
+
+# Session data
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Node modules
+node_modules/
+
+# Logs
+logs/*.log
+data/*.json
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
