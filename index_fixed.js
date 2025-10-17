@@ -1,54 +1,40 @@
 // ==================
-// RENDER.COM CONFIGURATION
+// REPLIT CONFIGURATION
 // ==================
 const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Render.com specific configuration
-if (process.env.RENDER) {
-  console.log('🚀 Running on Render.com - Applying production optimizations');
-  // Use Render's external hostname for better connectivity
-  process.env.WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL;
+// Replit specific configuration
+if (process.env.REPLIT_DB_URL) {
+  console.log('🚀 Running on Replit - Applying optimizations');
+  // Replit uses different port handling
+  process.env.WEBHOOK_URL = `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
 }
 
-// Health check endpoint
+// Health check endpoint (essential for UptimeRobot)
 app.get('/health', (req, res) => {
   const health = {
     status: 'ok',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    memory: process.memoryUsage(),
-    platform: process.platform,
-    node_version: process.version,
+    platform: 'replit',
     environment: process.env.NODE_ENV || 'development'
   };
-  
   res.json(health);
 });
 
 // Start health check server
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`🟢 Health check server running on port ${PORT}`);
+  console.log(`🌐 Replit URL: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`);
 });
 
-// ==================
-// WHATSAPP BOT IMPORTS & CONFIG
-// ==================
+// Enhanced Puppeteer config for Replit
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const qrcode = require("qrcode-terminal");
-const fs = require("fs");
-const path = require("path");
-const { google } = require("googleapis");
-const crypto = require("crypto");
-const natural = require("natural");
-const { WordTokenizer, PorterStemmer } = natural;
-require("dotenv").config();
-
-// Enhanced Puppeteer config for Render
 const client = new Client({
   authStrategy: new LocalAuth({
-    dataPath: './data' // Use relative path for Render
+    dataPath: './.wwebjs_auth' // Replit compatible path
   }),
   puppeteer: {
     headless: true,
@@ -60,16 +46,21 @@ const client = new Client({
       '--no-first-run',
       '--no-zygote',
       '--disable-gpu',
-      '--single-process', // Important for Render's memory limits
-      '--max-old-space-size=256'
-    ],
-    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+      '--single-process'
+    ]
   },
   webVersionCache: {
     type: 'remote',
     remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
   }
 });
+
+// Rest of your existing code continues below...
+// ==================
+// CONFIGURATION & VALIDATION
+// ==================
+const qrcode = require("qrcode-terminal");
+
 
 // ==================
 // CONFIGURATION & VALIDATION
