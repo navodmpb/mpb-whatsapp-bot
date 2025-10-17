@@ -12,8 +12,8 @@ credentials.json
 node_modules/
 
 # Logs
-logs/*.log
-data/*.json
+logs/
+data/
 
 # OS files
 .DS_Store
@@ -26,3 +26,6 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
+
+# Render
+render-build.sh

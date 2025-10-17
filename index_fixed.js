@@ -1,35 +1,40 @@
-// // Render.com specific configuration
-// if (process.env.RENDER) {
-//   console.log('🚀 Running on Render.com');
-//   // Use Render's external hostname for better connectivity
-//   process.env.WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL;
-// }
+// ==================
+// RENDER.COM CONFIGURATION
+// ==================
+const express = require('express');
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-// // Enhanced Puppeteer config for Render
-// const client = new Client({
-//   authStrategy: new LocalAuth(),
-//   puppeteer: {
-//     headless: true,
-//     args: [
-//       '--no-sandbox',
-//       '--disable-setuid-sandbox',
-//       '--disable-dev-shm-usage',
-//       '--disable-accelerated-2d-canvas',
-//       '--no-first-run',
-//       '--no-zygote',
-//       '--disable-gpu',
-//       '--single-process', // Important for Render's memory limits
-//       '--disable-features=VizDisplayCompositor'
-//     ],
-//     executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
-//   },
-//   webVersionCache: {
-//     type: 'remote',
-//     remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
-//   }
-// });
+// Render.com specific configuration
+if (process.env.RENDER) {
+  console.log('🚀 Running on Render.com - Applying production optimizations');
+  // Use Render's external hostname for better connectivity
+  process.env.WEBHOOK_URL = process.env.RENDER_EXTERNAL_URL;
+}
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  const health = {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    memory: process.memoryUsage(),
+    platform: process.platform,
+    node_version: process.version,
+    environment: process.env.NODE_ENV || 'development'
+  };
+  
+  res.json(health);
+});
 
+// Start health check server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🟢 Health check server running on port ${PORT}`);
+});
+
+// ==================
+// WHATSAPP BOT IMPORTS & CONFIG
+// ==================
 const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const fs = require("fs");
@@ -39,6 +44,32 @@ const crypto = require("crypto");
 const natural = require("natural");
 const { WordTokenizer, PorterStemmer } = natural;
 require("dotenv").config();
+
+// Enhanced Puppeteer config for Render
+const client = new Client({
+  authStrategy: new LocalAuth({
+    dataPath: './data' // Use relative path for Render
+  }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--disable-gpu',
+      '--single-process', // Important for Render's memory limits
+      '--max-old-space-size=256'
+    ],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+  },
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
+  }
+});
 
 // ==================
 // CONFIGURATION & VALIDATION
@@ -764,26 +795,6 @@ function logError(error, context = '') {
 // ==================
 // WHATSAPP CLIENT SETUP
 // ==================
-const client = new Client({
-  authStrategy: new LocalAuth(),
-  puppeteer: {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu'
-    ]
-  },
-  webVersionCache: {
-    type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
-  }
-});
-
 client.on("qr", (qr) => {
   console.log("\n📱 SCAN THIS QR CODE WITH WHATSAPP:\n");
   qrcode.generate(qr, { small: true });
