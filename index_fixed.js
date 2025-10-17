@@ -846,12 +846,12 @@ client.initialize();
 // ==================
 // GOOGLE API SETUP
 // ==================
-const credentials = require("./credentials.json");
 const { JWT } = require('google-auth-library');
 
+// Get credentials from environment variables
 const auth = new JWT({
-  email: credentials.client_email,
-  key: credentials.private_key,
+  email: process.env.GOOGLE_CLIENT_EMAIL,
+  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'), // Handle newlines in env var
   scopes: [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/spreadsheets.readonly",
