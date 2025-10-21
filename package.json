@@ -1,18 +1,41 @@
-
 {
-  "name": "ww",
-  "version": "1.0.0",
-  "description": "",
- "scripts": {
-    "start": "node index_fixed.js",
-    "dev": "node index_fixed.js"
+  "name": "mpb-whatsapp-bot",
+  "version": "2.0.0",
+  "description": "Mercantile Produce Brokers WhatsApp Bot - Production Ready",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node index.js"
   },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "tea",
+    "brokering",
+    "automation",
+    "nlp"
+  ],
+  "author": "MPBL IT Department",
+  "license": "MIT",
   "dependencies": {
     "whatsapp-web.js": "^1.23.0",
     "qrcode-terminal": "^0.12.0",
-    "googleapis": "^126.0.1",
-    "natural": "^6.3.0",
+    "googleapis": "^128.0.0",
+    "google-auth-library": "^9.4.0",
+    "natural": "^6.10.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/navodmpb/mpb-whatsapp-bot.git"
   }
 }

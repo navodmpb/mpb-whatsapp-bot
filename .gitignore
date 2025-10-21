@@ -1,31 +1,25 @@
-# Environment variables
+# Dependencies
+node_modules/
+
+# Environment
 .env
+.env.local
 
-# Google credentials
-credentials.json
-
-# Session data
+# WhatsApp session
 .wwebjs_auth/
 .wwebjs_cache/
 
-# Node modules
-node_modules/
-
-# Logs
-logs/
+# Data files (will be stored in Railway volumes)
 data/
+logs/
 
-# OS files
+# System
 .DS_Store
 Thumbs.db
 
-# IDE files
-.vscode/
-.idea/
+# Credentials (will use env vars)
+credentials.json
 
-# Temporary files
+# Temp files
+*.log
 *.tmp
-*.temp
-
-# Render
-render-build.sh

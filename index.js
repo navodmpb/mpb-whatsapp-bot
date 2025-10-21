@@ -1,66 +1,53 @@
+const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
+const qrcode = require("qrcode-terminal");
+const fs = require("fs");
+const path = require("path");
+const { google } = require("googleapis");
+const crypto = require("crypto");
+const natural = require("natural");
+const { WordTokenizer, PorterStemmer } = natural;
+const express = require("express");
+require("dotenv").config();
+
 // ==================
-// REPLIT CONFIGURATION
+// EXPRESS SERVER FOR HEALTH CHECKS
 // ==================
-const express = require('express');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Replit specific configuration
-if (process.env.REPLIT_DB_URL) {
-  console.log('🚀 Running on Replit - Applying optimizations');
-  // Replit uses different port handling
-  process.env.WEBHOOK_URL = `https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`;
-}
+app.use(express.json());
 
-// Health check endpoint (essential for UptimeRobot)
-app.get('/health', (req, res) => {
-  const health = {
-    status: 'ok',
+// Health check endpoint (required for Railway)
+app.get("/", (req, res) => {
+  res.json({
+    status: "healthy",
+    service: "MPB WhatsApp Bot",
     timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    platform: 'replit',
-    environment: process.env.NODE_ENV || 'development'
-  };
-  res.json(health);
+    uptime: process.uptime()
+  });
 });
 
-// Start health check server
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🟢 Health check server running on port ${PORT}`);
-  console.log(`🌐 Replit URL: https://${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`);
-});
-
-// Enhanced Puppeteer config for Replit
-const { Client, LocalAuth, MessageMedia } = require("whatsapp-web.js");
-const client = new Client({
-  authStrategy: new LocalAuth({
-    dataPath: './.wwebjs_auth' // Replit compatible path
-  }),
-  puppeteer: {
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--no-first-run',
-      '--no-zygote',
-      '--disable-gpu',
-      '--single-process'
-    ]
-  },
-  webVersionCache: {
-    type: 'remote',
-    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
+app.get("/health", (req, res) => {
+  try {
+    const health = loadHealthStatus();
+    res.json(health);
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
   }
 });
 
-// Rest of your existing code continues below...
-// ==================
-// CONFIGURATION & VALIDATION
-// ==================
-const qrcode = require("qrcode-terminal");
+app.get("/stats", (req, res) => {
+  try {
+    const stats = analytics.getStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ status: "error", message: error.message });
+  }
+});
 
+app.listen(PORT, () => {
+  console.log(`🌐 Health server running on port ${PORT}`);
+});
 
 // ==================
 // CONFIGURATION & VALIDATION
@@ -70,7 +57,9 @@ const REQUIRED_ENV_VARS = [
   'FACTORY_SHEET_ID', 
   'STAFF_SHEET_ID',
   'ELEVATION_AVG_SHEET_ID',
-  'DRIVE_FOLDER_ID'
+  'DRIVE_FOLDER_ID',
+  'GOOGLE_CLIENT_EMAIL',
+  'GOOGLE_PRIVATE_KEY'
 ];
 
 console.log("🔍 Validating environment variables...");
@@ -85,8 +74,8 @@ console.log("✅ All required environment variables present\n");
 // ==================
 // FILE PATHS & DIRECTORIES
 // ==================
-const DATA_DIR = "./data";
-const LOGS_DIR = "./logs";
+const DATA_DIR = process.env.DATA_DIR || "./data";
+const LOGS_DIR = process.env.LOGS_DIR || "./logs";
 const FORWARDED_MESSAGES_FILE = path.join(DATA_DIR, "forwardedMessages.json");
 const USER_INTERACTIONS_FILE = path.join(DATA_DIR, "userInteractions.json");
 const MESSAGE_CACHE_FILE = path.join(DATA_DIR, "messageCache.json");
@@ -142,6 +131,50 @@ const DEPARTMENT_MAP = {
 const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 const MESSAGE_CACHE_DURATION = 60 * 60 * 1000; // 1 hour
 const FORWARDED_MSG_CLEANUP = 24 * 60 * 60 * 1000; // 24 hours
+const MAX_ANALYTICS_ENTRIES = 10000; // Prevent memory overflow
+const MAX_LOG_SIZE = 10 * 1024 * 1024; // 10MB
+
+// ==================
+// UTILITY: SAFE FILE OPERATIONS
+// ==================
+function safeReadJSON(filePath, defaultValue = {}) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const data = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error(`⚠️ Failed to read ${filePath}:`, error.message);
+    logError(error, `safeReadJSON: ${filePath}`);
+  }
+  return defaultValue;
+}
+
+function safeWriteJSON(filePath, data) {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    return true;
+  } catch (error) {
+    console.error(`❌ Failed to write ${filePath}:`, error.message);
+    logError(error, `safeWriteJSON: ${filePath}`);
+    return false;
+  }
+}
+
+function rotateLogFile(filePath) {
+  try {
+    if (fs.existsSync(filePath)) {
+      const stats = fs.statSync(filePath);
+      if (stats.size > MAX_LOG_SIZE) {
+        const backupPath = `${filePath}.${Date.now()}.old`;
+        fs.renameSync(filePath, backupPath);
+        console.log(`🔄 Rotated log file: ${filePath}`);
+      }
+    }
+  } catch (error) {
+    console.error(`⚠️ Log rotation failed:`, error.message);
+  }
+}
 
 // ==================
 // ENHANCED ANALYTICS SYSTEM
@@ -149,42 +182,38 @@ const FORWARDED_MSG_CLEANUP = 24 * 60 * 60 * 1000; // 24 hours
 class EnhancedAnalytics {
   constructor() {
     this.analytics = this.loadAnalytics();
+    this.startTime = Date.now();
   }
   
   loadAnalytics() {
-    try {
-      if (fs.existsSync(ANALYTICS_FILE)) {
-        const data = JSON.parse(fs.readFileSync(ANALYTICS_FILE, 'utf8'));
-        // Convert array back to Set
-        data.unique_users = new Set(data.unique_users || []);
-        return data;
-      }
-    } catch (error) {
-      console.error('⚠️ Failed to load analytics:', error.message);
-    }
-    
-    return {
+    const data = safeReadJSON(ANALYTICS_FILE, {
       total_messages: 0,
-      unique_users: new Set(),
+      unique_users: [],
       intents: {},
       response_times: [],
       errors: 0,
       successful_requests: 0,
       failed_requests: 0,
       start_time: Date.now()
-    };
+    });
+    
+    // Convert array back to Set
+    data.unique_users = new Set(data.unique_users || []);
+    return data;
   }
   
   saveAnalytics() {
-    try {
-      const saveData = {
-        ...this.analytics,
-        unique_users: Array.from(this.analytics.unique_users)
-      };
-      fs.writeFileSync(ANALYTICS_FILE, JSON.stringify(saveData, null, 2));
-    } catch (error) {
-      console.error('❌ Failed to save analytics:', error.message);
+    const saveData = {
+      ...this.analytics,
+      unique_users: Array.from(this.analytics.unique_users)
+    };
+    
+    // Trim response_times if too large
+    if (saveData.response_times.length > MAX_ANALYTICS_ENTRIES) {
+      saveData.response_times = saveData.response_times.slice(-1000);
     }
+    
+    safeWriteJSON(ANALYTICS_FILE, saveData);
   }
   
   trackMessage(userId, intent, responseTime, success = true) {
@@ -203,7 +232,7 @@ class EnhancedAnalytics {
       success: success
     });
     
-    // Keep only last 1000 response times
+    // Keep only recent entries
     if (this.analytics.response_times.length > 1000) {
       this.analytics.response_times = this.analytics.response_times.slice(-1000);
     }
@@ -215,7 +244,10 @@ class EnhancedAnalytics {
       this.analytics.failed_requests++;
     }
     
-    this.saveAnalytics();
+    // Save periodically (every 10 messages)
+    if (this.analytics.total_messages % 10 === 0) {
+      this.saveAnalytics();
+    }
   }
   
   getStats() {
@@ -223,7 +255,7 @@ class EnhancedAnalytics {
       ? (this.analytics.response_times.reduce((acc, curr) => acc + curr.response_time, 0) / this.analytics.response_times.length).toFixed(2)
       : 0;
     
-    const uptime = Math.floor((Date.now() - this.analytics.start_time) / 1000);
+    const uptime = Math.floor((Date.now() - this.startTime) / 1000);
     const uptimeHours = Math.floor(uptime / 3600);
     const uptimeMinutes = Math.floor((uptime % 3600) / 60);
     
@@ -239,7 +271,11 @@ class EnhancedAnalytics {
       error_rate: this.analytics.total_messages > 0 
         ? ((this.analytics.errors / this.analytics.total_messages) * 100).toFixed(2) + '%' 
         : '0%',
-      uptime: `${uptimeHours}h ${uptimeMinutes}m`
+      uptime: `${uptimeHours}h ${uptimeMinutes}m`,
+      memory_usage: {
+        rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(2)} MB`,
+        heap_used: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`
+      }
     };
   }
 }
@@ -247,13 +283,14 @@ class EnhancedAnalytics {
 const analytics = new EnhancedAnalytics();
 
 // ==================
-// SMART RATE LIMITER
+// SMART RATE LIMITER (Persistent)
 // ==================
 class SmartRateLimiter {
   constructor(maxRequests = 15, windowMs = 60000) {
     this.maxRequests = maxRequests;
     this.windowMs = windowMs;
     this.userLimits = new Map();
+    this.violations = new Map();
   }
 
   checkLimit(userId) {
@@ -269,6 +306,9 @@ class SmartRateLimiter {
     }
     
     if (userData.count >= this.maxRequests) {
+      // Track violations
+      const violations = this.violations.get(userId) || 0;
+      this.violations.set(userId, violations + 1);
       return false;
     }
     
@@ -294,11 +334,27 @@ class SmartRateLimiter {
   
   cleanup() {
     const now = Date.now();
+    let cleaned = 0;
+    
     for (const [userId, userData] of this.userLimits.entries()) {
       if (now > userData.resetTime + this.windowMs) {
         this.userLimits.delete(userId);
+        cleaned++;
       }
     }
+    
+    // Clear old violations
+    if (this.violations.size > 100) {
+      this.violations.clear();
+    }
+    
+    if (cleaned > 0) {
+      console.log(`🧹 Cleaned ${cleaned} rate limit entries`);
+    }
+  }
+  
+  getViolations(userId) {
+    return this.violations.get(userId) || 0;
   }
 }
 
@@ -506,26 +562,11 @@ const classifier = new AdvancedIntentClassifier();
 // ==================
 class MessageCache {
   constructor() {
-    this.cache = this.loadCache();
-  }
-  
-  loadCache() {
-    try {
-      if (fs.existsSync(MESSAGE_CACHE_FILE)) {
-        return JSON.parse(fs.readFileSync(MESSAGE_CACHE_FILE, 'utf8'));
-      }
-    } catch (error) {
-      console.error('⚠️ Failed to load message cache:', error.message);
-    }
-    return {};
+    this.cache = safeReadJSON(MESSAGE_CACHE_FILE, {});
   }
   
   saveCache() {
-    try {
-      fs.writeFileSync(MESSAGE_CACHE_FILE, JSON.stringify(this.cache, null, 2));
-    } catch (error) {
-      console.error('❌ Failed to save message cache:', error.message);
-    }
+    safeWriteJSON(MESSAGE_CACHE_FILE, this.cache);
   }
   
   isDuplicate(userId, messageHash) {
@@ -537,7 +578,12 @@ class MessageCache {
     }
     
     this.cache[cacheKey] = now;
-    this.saveCache();
+    
+    // Save every 20 entries
+    if (Object.keys(this.cache).length % 20 === 0) {
+      this.saveCache();
+    }
+    
     return false;
   }
   
@@ -554,7 +600,7 @@ class MessageCache {
     
     if (cleaned > 0) {
       this.saveCache();
-      console.log(`🧹 Cleaned ${cleaned} old message cache entries`);
+      console.log(`🧹 Cleaned ${cleaned} message cache entries`);
     }
   }
 }
@@ -566,26 +612,11 @@ const messageCache = new MessageCache();
 // ==================
 class UserTracker {
   constructor() {
-    this.interactions = this.loadInteractions();
-  }
-  
-  loadInteractions() {
-    try {
-      if (fs.existsSync(USER_INTERACTIONS_FILE)) {
-        return JSON.parse(fs.readFileSync(USER_INTERACTIONS_FILE, 'utf8'));
-      }
-    } catch (error) {
-      console.error('⚠️ Failed to load user interactions:', error.message);
-    }
-    return {};
+    this.interactions = safeReadJSON(USER_INTERACTIONS_FILE, {});
   }
   
   saveInteractions() {
-    try {
-      fs.writeFileSync(USER_INTERACTIONS_FILE, JSON.stringify(this.interactions, null, 2));
-    } catch (error) {
-      console.error('❌ Failed to save user interactions:', error.message);
-    }
+    safeWriteJSON(USER_INTERACTIONS_FILE, this.interactions);
   }
   
   recordInteraction(userId) {
@@ -595,7 +626,7 @@ class UserTracker {
         lastSeen: Date.now(),
         messageCount: 0,
         lastWelcome: null,
-        botActive: true, // Bot active by default for new users
+        botActive: true,
         lastBotResponse: null,
         ignoredMessages: 0
       };
@@ -603,7 +634,11 @@ class UserTracker {
     
     this.interactions[userId].lastSeen = Date.now();
     this.interactions[userId].messageCount++;
-    this.saveInteractions();
+    
+    // Save every 5 interactions
+    if (this.interactions[userId].messageCount % 5 === 0) {
+      this.saveInteractions();
+    }
   }
   
   shouldSendWelcome(userId) {
@@ -626,7 +661,7 @@ class UserTracker {
   
   isBotActive(userId) {
     if (!this.interactions[userId]) {
-      return true; // Active for new users
+      return true;
     }
     return this.interactions[userId].botActive !== false;
   }
@@ -651,25 +686,26 @@ class UserTracker {
   
   shouldRespondToGeneral(userId) {
     if (!this.interactions[userId]) {
-      return true; // Respond to new users
+      return true;
     }
     
     const lastResponse = this.interactions[userId].lastBotResponse;
     if (!lastResponse) {
-      return true; // First interaction
+      return true;
     }
     
     const timeSinceLastResponse = Date.now() - lastResponse;
     const FIVE_MINUTES = 5 * 60 * 1000;
     
-    // Don't spam - only respond to general messages once per 5 minutes
     return timeSinceLastResponse > FIVE_MINUTES;
   }
   
   incrementIgnoredMessages(userId) {
     if (this.interactions[userId]) {
       this.interactions[userId].ignoredMessages++;
-      this.saveInteractions();
+      if (this.interactions[userId].ignoredMessages % 10 === 0) {
+        this.saveInteractions();
+      }
     }
   }
 }
@@ -681,26 +717,11 @@ const userTracker = new UserTracker();
 // ==================
 class ForwardedMessagesManager {
   constructor() {
-    this.messages = this.loadMessages();
-  }
-  
-  loadMessages() {
-    try {
-      if (fs.existsSync(FORWARDED_MESSAGES_FILE)) {
-        return JSON.parse(fs.readFileSync(FORWARDED_MESSAGES_FILE, 'utf8'));
-      }
-    } catch (error) {
-      console.error('⚠️ Failed to load forwarded messages:', error.message);
-    }
-    return {};
+    this.messages = safeReadJSON(FORWARDED_MESSAGES_FILE, {});
   }
   
   saveMessages() {
-    try {
-      fs.writeFileSync(FORWARDED_MESSAGES_FILE, JSON.stringify(this.messages, null, 2));
-    } catch (error) {
-      console.error('❌ Failed to save forwarded messages:', error.message);
-    }
+    safeWriteJSON(FORWARDED_MESSAGES_FILE, this.messages);
   }
   
   addMessage(messageId, data) {
@@ -755,6 +776,7 @@ const forwardedMessages = new ForwardedMessagesManager();
 // ==================
 function logRequest(userId, intent, success, responseTime) {
   try {
+    rotateLogFile(REQUEST_LOG_FILE);
     const maskedUserId = userId.replace(/\d{8}/, '****');
     const logEntry = {
       timestamp: new Date().toISOString(),
@@ -771,6 +793,7 @@ function logRequest(userId, intent, success, responseTime) {
 
 function logError(error, context = '') {
   try {
+    rotateLogFile(ERROR_LOG_FILE);
     const logEntry = {
       timestamp: new Date().toISOString(),
       error: error.message,
@@ -784,15 +807,45 @@ function logError(error, context = '') {
 }
 
 // ==================
-// WHATSAPP CLIENT SETUP
+// WHATSAPP CLIENT SETUP (IMPROVED FOR RAILWAY)
 // ==================
+const client = new Client({
+  authStrategy: new LocalAuth({
+    dataPath: path.join(DATA_DIR, '.wwebjs_auth')
+  }),
+  puppeteer: {
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process', // Important for Railway
+      '--disable-gpu',
+      '--disable-web-security',
+      '--disable-features=IsolateOrigins,site-per-process'
+    ],
+    timeout: 60000
+  },
+  webVersionCache: {
+    type: 'remote',
+    remotePath: 'https://raw.githubusercontent.com/wppconnect-team/wa-version/main/html/2.2412.54.html'
+  }
+});
+
+let isClientReady = false;
+
 client.on("qr", (qr) => {
   console.log("\n📱 SCAN THIS QR CODE WITH WHATSAPP:\n");
   qrcode.generate(qr, { small: true });
-  console.log("\n");
+  console.log("\n⚠️ QR Code will expire in 60 seconds\n");
+  console.log("💡 Tip: For Railway deployment, scan during initial setup\n");
 });
 
 client.on("ready", async () => {
+  isClientReady = true;
   console.log("\n" + "═".repeat(60));
   console.log("✅ WHATSAPP BOT IS READY!");
   console.log("🏢 Mercantile Produce Brokers - Tea Brokering Assistant");
@@ -810,7 +863,8 @@ client.on("ready", async () => {
   console.log("   ✓ Factory Performance Reports");
   console.log("   ✓ Elevation Averages");
   console.log("   ✓ Market Report Downloads");
-  console.log("   ✓ Health Monitoring\n");
+  console.log("   ✓ Health Monitoring API");
+  console.log("   ✓ Persistent Data Storage\n");
   
   const stats = analytics.getStats();
   console.log("📊 CURRENT STATISTICS:");
@@ -820,6 +874,8 @@ client.on("ready", async () => {
   console.log(`   - Uptime: ${stats.uptime}\n`);
   
   console.log("═".repeat(60) + "\n");
+  
+  updateHealthStatus();
 });
 
 client.on("auth_failure", (msg) => {
@@ -828,21 +884,29 @@ client.on("auth_failure", (msg) => {
 });
 
 client.on("disconnected", (reason) => {
+  isClientReady = false;
   console.log("⚠️ Client disconnected:", reason);
   logError(new Error(`Disconnected: ${reason}`), "WhatsApp Connection");
+  
+  // Auto-reconnect after 5 seconds
+  setTimeout(() => {
+    console.log("🔄 Attempting to reconnect...");
+    client.initialize();
+  }, 5000);
 });
 
-client.initialize();
+// Initialize client
+client.initialize().catch(err => {
+  console.error("❌ Failed to initialize client:", err);
+  logError(err, "Client Initialization");
+});
 
 // ==================
-// GOOGLE API SETUP
+// GOOGLE API SETUP (SECURE)
 // ==================
-const { JWT } = require('google-auth-library');
-
-// Get credentials from environment variables
-const auth = new JWT({
+const auth = new google.auth.JWT({
   email: process.env.GOOGLE_CLIENT_EMAIL,
-  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, '\n'), // Handle newlines in env var
+  key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
   scopes: [
     "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/spreadsheets.readonly",
@@ -899,7 +963,7 @@ async function verifyAllSheets() {
       }
     } catch (err) {
       console.error(`❌ ${sheet.name}: Failed - ${err.message}`);
-      console.log(`   Share with: ${credentials.client_email}`);
+      console.log(`   Share with: ${process.env.GOOGLE_CLIENT_EMAIL}`);
     }
   }
 
@@ -912,7 +976,7 @@ async function verifyAllSheets() {
     console.log(`✅ Drive Folder: "${folder.data.name}"`);
   } catch (err) {
     console.error(`❌ Drive Folder: Failed - ${err.message}`);
-    console.log(`   Share with: ${credentials.client_email}`);
+    console.log(`   Share with: ${process.env.GOOGLE_CLIENT_EMAIL}`);
   }
 
   console.log("\n" + "─".repeat(60) + "\n");
@@ -1591,6 +1655,7 @@ ${"═".repeat(42)}
 👥 *Unique Users:* ${stats.unique_users}
 ✅ *Success Rate:* ${(100 - parseFloat(stats.error_rate)).toFixed(1)}%
 ⚡ *Avg Response:* ${stats.average_response_time}
+💾 *Memory:* ${stats.memory_usage.heap_used}
 
 ${"─".repeat(42)}
 
@@ -1631,11 +1696,17 @@ client.on("message", async (msg) => {
     // Rate limiting
     if (!rateLimiter.checkLimit(userId)) {
       const remainingTime = rateLimiter.getRemainingTime(userId);
-      await msg.reply(
-        `⚠️ *Rate Limit Exceeded*\n\n` +
-        `Please wait ${remainingTime} seconds before sending more messages.\n` +
-        `This helps us maintain quality service for all users.`
-      );
+      const violations = rateLimiter.getViolations(userId);
+      
+      // Only respond every 5 violations to avoid spam
+      if (violations % 5 === 1) {
+        await msg.reply(
+          `⚠️ *Rate Limit Exceeded*\n\n` +
+          `Please wait ${remainingTime} seconds before sending more messages.\n` +
+          `This helps us maintain quality service for all users.`
+        );
+      }
+      
       analytics.trackMessage(userId, 'rate_limited', Date.now() - startTime, false);
       return;
     }
@@ -1656,7 +1727,7 @@ client.on("message", async (msg) => {
     // Track user interaction
     userTracker.recordInteraction(userId);
 
-    // Classify intent FIRST (so we can check for unmute commands even when muted)
+    // Classify intent
     const intent = classifier.classify(text);
     const entities = classifier.extractEntities(text);
     const saleNo = entities.sale_number;
@@ -1666,7 +1737,7 @@ client.on("message", async (msg) => {
       console.log(`🔍 Entities:`, JSON.stringify(entities));
     }
 
-    // Check if this is an unmute command - process even if bot is muted
+    // Check if this is an unmute command
     const lowerText = text.toLowerCase();
     const isUnmuteCommand = intent === "bot_control" && 
       (lowerText.includes('unmute') || 
@@ -1675,7 +1746,7 @@ client.on("message", async (msg) => {
        lowerText.includes('enable') ||
        lowerText.includes('start'));
 
-    // Check if bot is muted for this user (unless this is an unmute command)
+    // Check if bot is muted
     if (!userTracker.isBotActive(userId) && !isUnmuteCommand) {
       console.log(`🔇 Bot muted for ${userId.substring(0, 15)}... - Ignoring message`);
       userTracker.incrementIgnoredMessages(userId);
@@ -1709,7 +1780,7 @@ client.on("message", async (msg) => {
         analytics.trackMessage(userId, intent, responseTime, true);
         logRequest(userId, 'bot_muted', true, responseTime);
         return;
-      } else if (lowerText.includes('start') || lowerText.includes('unmute') || lowerText.includes('resume') || lowerText.includes('activate') || lowerText.includes('enable')) {
+      } else if (isUnmuteCommand) {
         userTracker.setBotActive(userId, true);
         await msg.reply(
           `🔔 *Bot Activated!*\n\n` +
@@ -1722,9 +1793,8 @@ client.on("message", async (msg) => {
       }
     }
 
-    // Handle irrelevant queries (jobs, vacancies, etc.)
+    // Handle irrelevant queries
     if (intent === "irrelevant") {
-      // Only respond once, then don't engage further
       if (userTracker.shouldRespondToGeneral(userId)) {
         await msg.reply(
           `Thank you for your interest in Mercantile Produce Brokers.\n\n` +
@@ -1740,9 +1810,8 @@ client.on("message", async (msg) => {
       return;
     }
 
-    // Handle casual conversation (hi, hello, thanks, etc.)
+    // Handle casual conversation
     if (intent === "casual_conversation") {
-      // Don't respond to every casual message
       console.log(`💬 Casual conversation detected - Not responding`);
       return;
     }
@@ -1897,16 +1966,14 @@ client.on("message", async (msg) => {
       return;
     }
 
-    // General/Unknown intent - Be smarter about responding
+    // General/Unknown intent
     if (intent === "general") {
-      // Only send welcome if it's the first time or hasn't been sent in 24 hours
       if (userTracker.shouldSendWelcome(userId)) {
         await msg.reply(getWelcomeMessage());
         userTracker.recordBotResponse(userId);
         analytics.trackMessage(userId, intent, Date.now() - startTime, true);
         logRequest(userId, intent, true, Date.now() - startTime);
       } else {
-        // Don't respond to every general message - only if enough time has passed
         if (userTracker.shouldRespondToGeneral(userId)) {
           await msg.reply(
             `👋 I'm here if you need:\n\n` +
@@ -1921,7 +1988,6 @@ client.on("message", async (msg) => {
           analytics.trackMessage(userId, intent, Date.now() - startTime, true);
           logRequest(userId, intent, true, Date.now() - startTime);
         } else {
-          // Silently ignore - don't spam
           console.log(`🤫 Silently ignoring general message (avoiding spam)`);
         }
       }
@@ -1950,14 +2016,10 @@ function updateHealthStatus() {
   try {
     const stats = analytics.getStats();
     const health = {
-      status: client.info ? 'connected' : 'disconnected',
+      status: isClientReady ? 'connected' : 'disconnected',
       timestamp: new Date().toISOString(),
       uptime: stats.uptime,
-      memory_usage: {
-        rss: `${(process.memoryUsage().rss / 1024 / 1024).toFixed(2)} MB`,
-        heap_used: `${(process.memoryUsage().heapUsed / 1024 / 1024).toFixed(2)} MB`,
-        heap_total: `${(process.memoryUsage().heapTotal / 1024 / 1024).toFixed(2)} MB`
-      },
+      memory_usage: stats.memory_usage,
       statistics: {
         total_messages: stats.total_messages,
         unique_users: stats.unique_users,
@@ -1976,10 +2038,17 @@ function updateHealthStatus() {
       }
     };
     
-    fs.writeFileSync(HEALTH_FILE, JSON.stringify(health, null, 2));
+    safeWriteJSON(HEALTH_FILE, health);
   } catch (error) {
     console.error('⚠️ Failed to update health status:', error.message);
   }
+}
+
+function loadHealthStatus() {
+  return safeReadJSON(HEALTH_FILE, {
+    status: 'unknown',
+    timestamp: new Date().toISOString()
+  });
 }
 
 // ==================
@@ -2034,7 +2103,20 @@ setInterval(() => {
   updateHealthStatus();
 }, 60 * 1000);
 
-// Analytics reporting every 5 minutes
+// Save analytics every 5 minutes
+setInterval(() => {
+  console.log("💾 Saving analytics...");
+  try {
+    analytics.saveAnalytics();
+    userTracker.saveInteractions();
+    messageCache.saveCache();
+    forwardedMessages.saveMessages();
+  } catch (error) {
+    console.error("❌ Save failed:", error.message);
+  }
+}, 5 * 60 * 1000);
+
+// Analytics reporting every 10 minutes
 setInterval(() => {
   try {
     const stats = analytics.getStats();
@@ -2044,6 +2126,7 @@ setInterval(() => {
     console.log(`   - Success Rate: ${(100 - parseFloat(stats.error_rate)).toFixed(1)}%`);
     console.log(`   - Avg Response: ${stats.average_response_time}`);
     console.log(`   - Uptime: ${stats.uptime}`);
+    console.log(`   - Memory: ${stats.memory_usage.heap_used}`);
     if (stats.popular_intents.length > 0) {
       console.log(`   - Top Intent: ${stats.popular_intents[0][0]} (${stats.popular_intents[0][1]} times)`);
     }
@@ -2051,7 +2134,7 @@ setInterval(() => {
   } catch (error) {
     console.error("❌ Analytics reporting failed:", error.message);
   }
-}, 5 * 60 * 1000);
+}, 10 * 60 * 1000);
 
 // ==================
 // GRACEFUL SHUTDOWN
@@ -2061,6 +2144,7 @@ process.on('SIGINT', async () => {
   
   try {
     // Save all data
+    console.log('💾 Saving all data...');
     analytics.saveAnalytics();
     messageCache.saveCache();
     userTracker.saveInteractions();
@@ -2068,6 +2152,7 @@ process.on('SIGINT', async () => {
     updateHealthStatus();
     
     // Destroy client
+    console.log('🔌 Disconnecting WhatsApp...');
     await client.destroy();
     
     console.log('✅ Shutdown complete');
@@ -2078,9 +2163,34 @@ process.on('SIGINT', async () => {
   }
 });
 
+process.on('SIGTERM', async () => {
+  console.log('\n⚠️ SIGTERM received, shutting down...');
+  
+  try {
+    analytics.saveAnalytics();
+    messageCache.saveCache();
+    userTracker.saveInteractions();
+    forwardedMessages.saveMessages();
+    updateHealthStatus();
+    await client.destroy();
+    process.exit(0);
+  } catch (error) {
+    console.error('❌ Error during shutdown:', error.message);
+    process.exit(1);
+  }
+});
+
 process.on('uncaughtException', (error) => {
   console.error('❌ UNCAUGHT EXCEPTION:', error.message);
   logError(error, 'Uncaught Exception');
+  
+  // Try to save data before crash
+  try {
+    analytics.saveAnalytics();
+    updateHealthStatus();
+  } catch (e) {
+    console.error('Failed to save on crash:', e.message);
+  }
 });
 
 process.on('unhandledRejection', (reason, promise) => {
@@ -2092,7 +2202,7 @@ process.on('unhandledRejection', (reason, promise) => {
 // STARTUP
 // ==================
 console.log("\n" + "═".repeat(60));
-console.log("🚀 MPB WHATSAPP BOT - PRODUCTION READY");
+console.log("🚀 MPB WHATSAPP BOT - PRODUCTION READY v2.0");
 console.log("═".repeat(60) + "\n");
 
 console.log("📋 CONFIGURATION:");
@@ -2101,6 +2211,7 @@ console.log(`   ✓ Factory Sheet: ${FACTORY_SHEET_ID ? 'Configured' : '✗ Miss
 console.log(`   ✓ Staff Sheet: ${STAFF_SHEET_ID ? 'Configured' : '✗ Missing'}`);
 console.log(`   ✓ Elevation Sheet: ${ELEVATION_AVG_SHEET_ID ? 'Configured' : '✗ Missing'}`);
 console.log(`   ✓ Drive Folder: ${DRIVE_FOLDER_ID ? 'Configured' : '✗ Missing'}`);
+console.log(`   ✓ Google Auth: ${process.env.GOOGLE_CLIENT_EMAIL ? 'Configured' : '✗ Missing'}`);
 
 console.log("\n🔧 FEATURES:");
 console.log("   ✓ Advanced NLP Intent Classification");
@@ -2111,13 +2222,20 @@ console.log("   ✓ Department Routing & Auto-reply");
 console.log("   ✓ Factory Performance Reports");
 console.log("   ✓ Elevation Averages");
 console.log("   ✓ Market Report Downloads");
-console.log("   ✓ Health Monitoring");
+console.log("   ✓ Health Monitoring API");
 console.log("   ✓ Error Logging & Recovery");
 console.log("   ✓ Graceful Shutdown");
+console.log("   ✓ Auto-reconnect on Disconnect");
+console.log("   ✓ Persistent Storage");
 
 console.log("\n📁 DATA DIRECTORIES:");
 console.log(`   - Data: ${DATA_DIR}`);
 console.log(`   - Logs: ${LOGS_DIR}`);
+
+console.log("\n🌐 HEALTH SERVER:");
+console.log(`   - Port: ${PORT}`);
+console.log(`   - Health: http://localhost:${PORT}/health`);
+console.log(`   - Stats: http://localhost:${PORT}/stats`);
 
 console.log("\n" + "═".repeat(60) + "\n");
 console.log("⏳ Initializing WhatsApp connection...\n");
@@ -2130,5 +2248,6 @@ module.exports = {
   rateLimiter,
   messageCache,
   userTracker,
-  forwardedMessages
+  forwardedMessages,
+  app
 };

@@ -1,3 +1,0 @@
-run = "npm start"
-language = "nodejs"
-entrypoint = "index_fixed.js"
